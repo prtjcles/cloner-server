@@ -78,7 +78,12 @@ def validate():
     entry = keys[key]
 
     if entry.get("revoked"):
-        return jsonify({"valid": False, "reason": "Key has been revoked"}), 200
+        return jsonify({
+            "valid":          False,
+            "reason":         "Key has been revoked",
+            "revoked":        True,
+            "revoke_message": entry.get("revoke_message", "No reason provided."),
+        }), 200
 
     # ── Check if key is currently locked out ──────────────────
     if entry.get("locked_until"):
@@ -192,9 +197,10 @@ def generate():
 
 @app.route("/revoke", methods=["POST"])
 def revoke():
-    data     = request.json or {}
-    password = data.get("password", "")
-    key      = data.get("key", "").strip().upper()
+    data           = request.json or {}
+    password       = data.get("password", "")
+    key            = data.get("key", "").strip().upper()
+    revoke_message = data.get("revoke_message", "").strip()
 
     if password != ADMIN_PASSWORD:
         return jsonify({"error": "Unauthorized"}), 401
@@ -203,7 +209,9 @@ def revoke():
     if key not in keys:
         return jsonify({"error": "Key not found"}), 404
 
-    keys[key]["revoked"] = True
+    keys[key]["revoked"]         = True
+    keys[key]["revoked_at"]      = datetime.utcnow().isoformat()
+    keys[key]["revoke_message"]  = revoke_message or "No reason provided."
     save_keys(keys)
     return jsonify({"message": f"Key {key} revoked"}), 200
 
