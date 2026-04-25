@@ -1,5 +1,5 @@
 """
-License Key Server — Made By aio5.
+License Key Server — Full Featured v2
 ======================================
 Requirements:
     pip install flask
@@ -376,3 +376,49 @@ def index():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
+# ── Announcement ──────────────────────────────────────────────
+
+ANNOUNCEMENT_FILE = "announcement.json"
+MAINTENANCE_FILE  = "maintenance.json"
+
+def load_announcement():
+    if not os.path.exists(ANNOUNCEMENT_FILE): return {"message": ""}
+    with open(ANNOUNCEMENT_FILE) as f: return json.load(f)
+
+def save_announcement(data):
+    with open(ANNOUNCEMENT_FILE, "w") as f: json.dump(data, f)
+
+def load_maintenance():
+    if not os.path.exists(MAINTENANCE_FILE): return {"enabled": False, "message": ""}
+    with open(MAINTENANCE_FILE) as f: return json.load(f)
+
+def save_maintenance(data):
+    with open(MAINTENANCE_FILE, "w") as f: json.dump(data, f)
+
+@app.route("/announcement", methods=["GET"])
+def get_announcement():
+    return jsonify(load_announcement()), 200
+
+@app.route("/announcement", methods=["POST"])
+def set_announcement():
+    data     = request.json or {}
+    password = data.get("password","")
+    if password != ADMIN_PASSWORD: return jsonify({"error":"Unauthorized"}), 401
+    ann = {"message": data.get("message","")}
+    save_announcement(ann)
+    return jsonify({"message":"Announcement updated."}), 200
+
+@app.route("/maintenance", methods=["GET"])
+def get_maintenance():
+    return jsonify(load_maintenance()), 200
+
+@app.route("/maintenance", methods=["POST"])
+def set_maintenance():
+    data     = request.json or {}
+    password = data.get("password","")
+    if password != ADMIN_PASSWORD: return jsonify({"error":"Unauthorized"}), 401
+    maint = {"enabled": data.get("enabled", False), "message": data.get("message","Maintenance in progress.")}
+    save_maintenance(maint)
+    return jsonify({"message":"Maintenance updated."}), 200
