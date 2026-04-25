@@ -20,12 +20,14 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme123")
-ALERT_WEBHOOK  = os.environ.get("ALERT_WEBHOOK", "")
-CURRENT_VERSION= os.environ.get("VERSION", "2.0.0")
-KEYS_FILE      = "keys.json"
-IP_LOG_FILE    = "ip_logs.json"
-LOCKOUT_HOURS  = 24
+ADMIN_PASSWORD    = os.environ.get("ADMIN_PASSWORD", "changeme123")
+ALERT_WEBHOOK     = os.environ.get("ALERT_WEBHOOK", "")
+CURRENT_VERSION   = os.environ.get("VERSION", "2.0.0")
+KEYS_FILE         = "keys.json"
+IP_LOG_FILE       = "ip_logs.json"
+ANNOUNCEMENT_FILE = "announcement.json"
+MAINTENANCE_FILE  = "maintenance.json"
+LOCKOUT_HOURS     = 24
 
 def load_keys():
     if not os.path.exists(KEYS_FILE): return {}
@@ -41,14 +43,28 @@ def load_ip_logs():
 def save_ip_logs(logs):
     with open(IP_LOG_FILE, "w") as f: json.dump(logs, f, indent=2)
 
+def load_announcement():
+    if not os.path.exists(ANNOUNCEMENT_FILE): return {"message": ""}
+    with open(ANNOUNCEMENT_FILE) as f: return json.load(f)
+
+def save_announcement(data):
+    with open(ANNOUNCEMENT_FILE, "w") as f: json.dump(data, f)
+
+def load_maintenance():
+    if not os.path.exists(MAINTENANCE_FILE): return {"enabled": False, "message": ""}
+    with open(MAINTENANCE_FILE) as f: return json.load(f)
+
+def save_maintenance(data):
+    with open(MAINTENANCE_FILE, "w") as f: json.dump(data, f)
+
 def generate_key():
     chars = string.ascii_uppercase + string.digits
     return "-".join("".join(random.choices(chars, k=5)) for _ in range(4))
 
 DURATIONS = {
-    "1day":    timedelta(days=1),
-    "1week":   timedelta(weeks=1),
-    "1month":  timedelta(days=30),
+    "1day":     timedelta(days=1),
+    "1week":    timedelta(weeks=1),
+    "1month":   timedelta(days=30),
     "lifetime": None,
 }
 
@@ -79,8 +95,8 @@ def format_time_left(expires_str):
     days    = delta.days
     hours   = delta.seconds // 3600
     minutes = (delta.seconds % 3600) // 60
-    if days > 0:   return f"{days} day{'s' if days!=1 else ''}, {hours} hour{'s' if hours!=1 else ''}", delta
-    if hours > 0:  return f"{hours} hour{'s' if hours!=1 else ''}, {minutes} min{'s' if minutes!=1 else ''}", delta
+    if days > 0:  return f"{days} day{'s' if days!=1 else ''}, {hours} hour{'s' if hours!=1 else ''}", delta
+    if hours > 0: return f"{hours} hour{'s' if hours!=1 else ''}, {minutes} min{'s' if minutes!=1 else ''}", delta
     return f"{minutes} minute{'s' if minutes!=1 else ''}", delta
 
 # ── Validate ──────────────────────────────────────────────────
@@ -94,7 +110,7 @@ def validate():
     if not key:  return jsonify({"valid":False,"reason":"No key provided"}), 400
     if not hwid: return jsonify({"valid":False,"reason":"No HWID provided"}), 400
 
-    keys  = load_keys()
+    keys = load_keys()
     if key not in keys: return jsonify({"valid":False,"reason":"Invalid key"}), 200
 
     entry = keys[key]
@@ -128,7 +144,6 @@ def validate():
         entry["hwid"]           = hwid
         entry["hwid_locked_at"] = datetime.utcnow().isoformat()
 
-    # Track usage
     entry["usage_count"] = entry.get("usage_count", 0) + 1
     entry["last_seen"]   = datetime.utcnow().isoformat()
 
@@ -141,9 +156,7 @@ def validate():
     if time_left is None:
         return jsonify({"valid":False,"reason":"Key has expired"}), 200
 
-    # Warn if expiring in 24hrs
     expiry_warning = delta.total_seconds() < 86400
-
     keys[key] = entry
     save_keys(keys)
 
@@ -163,10 +176,10 @@ def generate():
     data     = request.json or {}
     password = data.get("password","")
     plan     = data.get("plan","1week")
-    count    = min(int(data.get("count", 1)), 50)  # bulk: up to 50
+    count    = min(int(data.get("count", 1)), 50)
 
     if password != ADMIN_PASSWORD: return jsonify({"error":"Unauthorized"}), 401
-    if plan not in DURATIONS:      return jsonify({"error":f"Invalid plan"}), 400
+    if plan not in DURATIONS:      return jsonify({"error":"Invalid plan"}), 400
 
     keys     = load_keys()
     duration = DURATIONS[plan]
@@ -281,7 +294,7 @@ def log_ip():
     logs = load_ip_logs()
     if key not in logs: logs[key] = []
     logs[key].append({"ip":ip,"username":username,"time":t})
-    logs[key] = logs[key][-20:]  # Keep last 20 per key
+    logs[key] = logs[key][-20:]
     save_ip_logs(logs)
 
     return jsonify({"message":"Logged"}), 200
@@ -325,12 +338,12 @@ def stats():
 
     if password != ADMIN_PASSWORD: return jsonify({"error":"Unauthorized"}), 401
 
-    keys    = load_keys()
-    now     = datetime.utcnow()
-    total   = len(keys)
-    revoked = sum(1 for e in keys.values() if e.get("revoked"))
-    expired = 0
-    active_5m = 0
+    keys         = load_keys()
+    now          = datetime.utcnow()
+    total        = len(keys)
+    revoked      = sum(1 for e in keys.values() if e.get("revoked"))
+    expired      = 0
+    active_5m    = 0
     expiring_24h = 0
 
     for entry in keys.values():
@@ -346,12 +359,12 @@ def stats():
             active_5m += 1
 
     return jsonify({
-        "total":         total,
-        "active":        total - revoked - expired,
-        "revoked":       revoked,
-        "expired":       expired,
-        "online_now":    active_5m,
-        "expiring_24h":  expiring_24h,
+        "total":        total,
+        "active":       total - revoked - expired,
+        "revoked":      revoked,
+        "expired":      expired,
+        "online_now":   active_5m,
+        "expiring_24h": expiring_24h,
     }), 200
 
 # ── Version ───────────────────────────────────────────────────
@@ -369,33 +382,7 @@ def list_keys():
     if password != ADMIN_PASSWORD: return jsonify({"error":"Unauthorized"}), 401
     return jsonify(load_keys()), 200
 
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({"status":"License server running","version":CURRENT_VERSION}), 200
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
-
 # ── Announcement ──────────────────────────────────────────────
-
-ANNOUNCEMENT_FILE = "announcement.json"
-MAINTENANCE_FILE  = "maintenance.json"
-
-def load_announcement():
-    if not os.path.exists(ANNOUNCEMENT_FILE): return {"message": ""}
-    with open(ANNOUNCEMENT_FILE) as f: return json.load(f)
-
-def save_announcement(data):
-    with open(ANNOUNCEMENT_FILE, "w") as f: json.dump(data, f)
-
-def load_maintenance():
-    if not os.path.exists(MAINTENANCE_FILE): return {"enabled": False, "message": ""}
-    with open(MAINTENANCE_FILE) as f: return json.load(f)
-
-def save_maintenance(data):
-    with open(MAINTENANCE_FILE, "w") as f: json.dump(data, f)
 
 @app.route("/announcement", methods=["GET"])
 def get_announcement():
@@ -410,6 +397,8 @@ def set_announcement():
     save_announcement(ann)
     return jsonify({"message":"Announcement updated."}), 200
 
+# ── Maintenance ───────────────────────────────────────────────
+
 @app.route("/maintenance", methods=["GET"])
 def get_maintenance():
     return jsonify(load_maintenance()), 200
@@ -422,3 +411,13 @@ def set_maintenance():
     maint = {"enabled": data.get("enabled", False), "message": data.get("message","Maintenance in progress.")}
     save_maintenance(maint)
     return jsonify({"message":"Maintenance updated."}), 200
+
+# ── Index ─────────────────────────────────────────────────────
+
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"status":"License server running","version":CURRENT_VERSION}), 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
